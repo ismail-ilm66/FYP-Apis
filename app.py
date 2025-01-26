@@ -1,5 +1,7 @@
 from flask import Flask, request, jsonify
+import joblib
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 from tensorflow import keras
 from keras.layers import Dense
@@ -8,13 +10,20 @@ import pickle
 import os
 import traceback
 import tensorflow as tf
+import xgboost
+
 print(tf.__version__)
 
-# Paths to model and label encoder
+# paths to the Crop growth prediction model and label encoder
+CROP_GROWTH_PREDICTION_MODEL_PATH = "crop_growth_model.pkl"
+CROP_GROWTH_PREDICTION_SCALER_PATH = "scaler.pkl"
+CROP_GROWTH_PREDICTION_ENCODER_PATH = "label_encoders.pkl"
+
+# Paths to model and label encoder of crop_prediction model
 MODEL_PATH = "crop_cnn_model.h5"
 ENCODER_PATH = "label_encoder.pkl"
 
-# Check if model and encoder files exist
+# Check if crop_prediction and encoder files exist
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError(f"Model file not found at {MODEL_PATH}")
 
@@ -31,10 +40,36 @@ except Exception as e:
     traceback.print_exc()
     raise
 
+#Checking of the Crop growth prediction model and label encoder exists:
+# Check if new model files exist
+if not os.path.exists(CROP_GROWTH_PREDICTION_MODEL_PATH):
+    raise FileNotFoundError(f"New model file not found at {CROP_GROWTH_PREDICTION_MODEL_PATH}")
+
+if not os.path.exists(CROP_GROWTH_PREDICTION_SCALER_PATH):
+    raise FileNotFoundError(f"Scaler file not found at {CROP_GROWTH_PREDICTION_SCALER_PATH}")
+
+if not os.path.exists(CROP_GROWTH_PREDICTION_ENCODER_PATH):
+    raise FileNotFoundError(f"Label encoder file not found at {CROP_GROWTH_PREDICTION_ENCODER_PATH}")
+
+# Load the new XGBoost model and preprocessing objects
+try:
+    crop_model = joblib.load(CROP_GROWTH_PREDICTION_MODEL_PATH)
+    scaler = joblib.load(CROP_GROWTH_PREDICTION_SCALER_PATH)
+    label_encoders = joblib.load(CROP_GROWTH_PREDICTION_ENCODER_PATH)
+except Exception as e:
+    print("Error loading new model or preprocessing objects:", e)
+    traceback.print_exc()
+    raise
+
+
+
 # Initialize Flask app
 app = Flask(__name__)
 
-# Helper function to preprocess input
+#Feature Columns for the crop growth prediction model
+FEATURE_COLUMNS = ['Crop', 'Soil_Type', 'Sunlight_Hours', 'Temperature', 'Humidity', 'Water_Frequency', 'Fertilizer_Type']
+
+# Helper function to preprocess input of the crop prediction model
 def preprocess_input(data):
     try:
         # Ensure input is in the correct format
@@ -43,6 +78,25 @@ def preprocess_input(data):
     except Exception as e:
         raise ValueError(f"Error preprocessing input: {e}")
 
+# Helper function to preprocess input of the crop growth prediction model
+def preprocess_crop_input(data):
+    try:
+        # Convert input to DataFrame
+        input_df = pd.DataFrame([data], columns=FEATURE_COLUMNS)
+
+        # Encode categorical columns
+        categorical_columns = ['Crop', 'Soil_Type', 'Water_Frequency', 'Fertilizer_Type']
+        for col in categorical_columns:
+            if col in input_df.columns:
+                input_df[col] = label_encoders[col].transform(input_df[col])
+
+        # Scale numerical features
+        input_scaled = scaler.transform(input_df)
+
+        return input_scaled
+    except Exception as e:
+        raise ValueError(f"Error preprocessing crop input: {e}")
+
 # Route: Home
 @app.route("/", methods=["GET"])
 def home():
@@ -50,7 +104,7 @@ def home():
         "message": "Welcome to the Crop Prediction API!",
         "routes": {
             "/predict": "POST - Predict crop based on input features",
-            "/upload": "POST - Upload new model or encoder (optional)"
+            "/predict_crop_growth": "POST - Upload new model or encoder (optional)"
         }
     })
 
@@ -81,28 +135,38 @@ def predict_crop():
         traceback.print_exc()  # Log the error for debugging
         return jsonify({"error": str(e)}), 500
 
-# Route: Upload New Model or Encoder (Optional)
-@app.route("/upload", methods=["POST"])
-def upload_files():
+# Route: Predict Crop Growth
+@app.route("/predict_crop_growth", methods=["POST"])
+def predict_crop_growth():
     try:
-        model_file = request.files.get("model")
-        encoder_file = request.files.get("encoder")
+        # Get JSON input
+        input_data = request.json
+        features = input_data.get("features")
+        print("Following are the features:")
+        print(features)
 
-        if model_file:
-            model_file.save(MODEL_PATH)
-            global model
-            model = load_model(MODEL_PATH)
+        if not features or len(features) != len(FEATURE_COLUMNS):
+            return jsonify({"error": f"Please provide exactly {len(FEATURE_COLUMNS)} features: {FEATURE_COLUMNS}"}), 400
 
-        if encoder_file:
-            encoder_file.save(ENCODER_PATH)
-            global label_encoder
-            with open(ENCODER_PATH, 'rb') as f:
-                label_encoder = pickle.load(f)
+        # Preprocess input
+        processed_data = preprocess_crop_input(features)
 
-        return jsonify({"message": "Files uploaded successfully"})
+        # Predict using the new model
+        prediction = crop_model.predict(processed_data)
+
+        # Interpret the result
+        result = "Growable" if prediction[0] == 1 else "Not Growable"
+
+        # Return prediction
+        return jsonify({
+            "input_features": features,
+            "prediction": result
+        })
     except Exception as e:
         traceback.print_exc()  # Log the error for debugging
         return jsonify({"error": str(e)}), 500
+
+
 
 # Run the app
 if __name__ == "__main__":
