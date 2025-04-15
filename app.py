@@ -10,7 +10,7 @@ import pickle
 import os
 import traceback
 import tensorflow as tf
-import xgboost
+import xgboost as xgb
 
 print(tf.__version__)
 
@@ -22,6 +22,31 @@ CROP_GROWTH_PREDICTION_ENCODER_PATH = "label_encoders.pkl"
 # Paths to model and label encoder of crop_prediction model
 MODEL_PATH = "crop_cnn_model.h5"
 ENCODER_PATH = "label_encoder.pkl"
+
+# Paths to the fertilizer recommendation system  model and label encoder
+FERTILIZER_MODEL_PATH = "fertilizer_recommendation_sys.pkl"
+FERTILIZER_ENCODER_PATH = "fertilizer_recommendation_sys_le.pkl"
+
+# Check if fertilizer model and encoder files exist
+if not os.path.exists(FERTILIZER_MODEL_PATH):
+    raise FileNotFoundError(f"Fertilizer model file not found at {FERTILIZER_MODEL_PATH}")
+
+if not os.path.exists(FERTILIZER_ENCODER_PATH):
+    raise FileNotFoundError(f"Fertilizer label encoder file not found at {FERTILIZER_ENCODER_PATH}")
+# Load fertilizer model and label encoder from .pkl files
+try:
+    with open(FERTILIZER_MODEL_PATH, 'rb') as f:
+        fertilizer_model = pickle.load(f)
+    with open(FERTILIZER_ENCODER_PATH, 'rb') as f:
+        fertilizer_le = pickle.load(f)
+except Exception as e:
+    print("Error loading fertilizer model or encoder:", e)
+    traceback.print_exc()
+    raise
+
+# Feature columns for the fertilizer recommendation model
+FERTILIZER_FEATURE_COLUMNS = ['Temperature', 'Humidity', 'Soil Moisture', 'Soil Type', 'Crop Type', 'Nitrogen', 'Potassium', 'Phosphorus']
+
 
 # Check if crop_prediction and encoder files exist
 if not os.path.exists(MODEL_PATH):
@@ -167,6 +192,34 @@ def predict_crop_growth():
         return jsonify({"error": str(e)}), 500
 
 
+# Route: Predict Fertilizer
+@app.route("/predict_fertilizer", methods=["POST"])
+def predict_fertilizer():
+    try:
+        input_data = request.json
+        features = input_data.get("features")
+        if not features:
+            return jsonify({"error": "No features provided"}), 400
+        required_features = set(FERTILIZER_FEATURE_COLUMNS)
+        provided_features = set(features.keys())
+        if not required_features.issubset(provided_features):
+            missing = required_features - provided_features
+            return jsonify({"error": f"Missing features: {missing}"}), 400
+        new_df = pd.DataFrame([features])
+        categorical_columns = ['Soil Type', 'Crop Type']
+        for col in categorical_columns:
+            new_df[col] = new_df[col].astype('category')
+        dnew = xgb.DMatrix(new_df, enable_categorical=True)
+        pred = fertilizer_model.predict(dnew)
+        predicted_label = int(pred[0])
+        fertilizer_name = fertilizer_le.inverse_transform([predicted_label])[0]
+        return jsonify({
+            "input_features": features,
+            "predicted_fertilizer": fertilizer_name
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 # Run the app
 if __name__ == "__main__":
