@@ -1,22 +1,20 @@
-import logging
 
-# Configure logging
-logging.basicConfig(level=logging.ERROR, filename='api_errors.log')
+class APIException(Exception):
+    def __init__(self, message, status_code):
+        self.message = message
+        self.status_code = status_code
 
-@app.errorhandler(APIException)
-def handle_api_exception(error):
-    response = jsonify(error.to_dict())
-    response.status_code = error.status_code
-    return response
-
-@app.errorhandler(Exception)
-def handle_generic_exception(error):
-    logging.error(f"Unexpected error: {str(error)}", exc_info=True)
-    response = jsonify({
-        'error': {
-            'message': 'An unexpected error occurred',
-            'code': 500
+    def to_dict(self):
+        return {
+            'error': {
+                'message': self.message,
+                'code': self.status_code
+            }
         }
-    })
-    response.status_code = 500
-    return response
+class BadRequest(APIException):
+    def __init__(self, message="Invalid request"):
+        super().__init__(message, 400)
+
+class InternalServerError(APIException):
+    def __init__(self, message="Internal server error"):
+        super().__init__(message, 500)
