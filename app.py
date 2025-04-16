@@ -11,6 +11,12 @@ import os
 import traceback
 import tensorflow as tf
 import xgboost as xgb
+import logging
+
+from error_handlers import APIException, BadRequest, InternalServerError
+from report_generators import generate_crop_report
+
+
 
 print(tf.__version__)
 
@@ -90,6 +96,49 @@ except Exception as e:
 
 # Initialize Flask app
 app = Flask(__name__)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    filename='api_errors.log',
+    format='%(asctime)s %(levelname)s: %(message)s'
+)
+
+
+
+
+@app.errorhandler(APIException)
+def handle_api_exception(error):
+    logging.info(f"APIException: {error.message}, Code: {error.status_code}")
+    return jsonify(error.to_dict()), error.status_code
+
+@app.errorhandler(Exception)
+def handle_generic_exception(error):
+    logging.error(f"Unexpected error: {str(error)}", exc_info=True)
+    return jsonify({
+        'error': {
+            'message': 'An unexpected error occurred',
+            'code': 500
+        }
+    }), 500
+
+@app.errorhandler(404)
+def handle_not_found(error):
+    return jsonify({
+        'error': {
+            'message': 'Resource not found',
+            'code': 404
+        }
+    }), 404
+
+@app.errorhandler(405)
+def handle_method_not_allowed(error):
+    return jsonify({
+        'error': {
+            'message': 'Method not allowed',
+            'code': 405
+        }
+    }), 405
+
 
 #Feature Columns for the crop growth prediction model
 FEATURE_COLUMNS = ['Crop', 'Soil_Type', 'Sunlight_Hours', 'Temperature', 'Humidity', 'Water_Frequency', 'Fertilizer_Type']
@@ -97,11 +146,34 @@ FEATURE_COLUMNS = ['Crop', 'Soil_Type', 'Sunlight_Hours', 'Temperature', 'Humidi
 # Helper function to preprocess input of the crop prediction model
 def preprocess_input(data):
     try:
+        if not isinstance(data, list) or len(data) != 5:
+            raise BadRequest("Please provide exactly 5 features: Temperature, pH, Phosphorus, Nitrogen, Potash")
+        
+        try:
+            features = [float(x) for x in data]
+        except (ValueError , TypeError):
+            raise BadRequest("Invalid input format. Please provide numeric values.")
+        #Validate Ranges
+        temp, ph, phosphorus, nitrogen, potash = features
+        if not (0 <= temp <= 50):  # Reasonable temperature range (°C)
+            raise BadRequest("Temperature must be between 0 and 50°C")
+        if not (0 <= ph <= 14):  # pH range
+            raise BadRequest("pH must be between 0 and 14")
+        if not (0 <= phosphorus <= 1000):  # Arbitrary max for nutrients
+            raise BadRequest("Phosphorus must be between 0 and 1000")
+        if not (0 <= nitrogen <= 1000):
+            raise BadRequest("Nitrogen must be between 0 and 1000")
+        if not (0 <= potash <= 1000):
+            raise BadRequest("Potash must be between 0 and 1000")
+
+
         # Ensure input is in the correct format
         data = np.array(data).reshape(1, 5, 1)  # (batch_size, steps, channels)
         return data
     except Exception as e:
-        raise ValueError(f"Error preprocessing input: {e}")
+        if isinstance(e , APIException):
+            raise
+        raise BadRequest(f"Error preprocessing input: {e}")
 
 # Helper function to preprocess input of the crop growth prediction model
 def preprocess_crop_input(data):
@@ -140,10 +212,10 @@ def predict_crop():
         # Get JSON input
         input_data = request.json
         features = input_data.get("features")
+        if not features:
+            raise BadRequest("Missing 'features' key in JSON")
 
-        if not features or len(features) != 5:
-            return jsonify({"error": "Please provide exactly 5 features: Temperature, PH, Phosphorous, Nitrogen, Potash"}), 400
-
+        
         # Preprocess input
         processed_data = preprocess_input(features)
 
@@ -151,14 +223,29 @@ def predict_crop():
         prediction = model.predict(processed_data)
         predicted_label = label_encoder.inverse_transform([np.argmax(prediction)])
 
-        # Return prediction
-        return jsonify({
+        try:
+            crop_report = generate_crop_report(predicted_label[0])
+            return jsonify({
             "input_features": features,
-            "predicted_crop": predicted_label[0]
+            "predicted_crop": predicted_label[0],
+            "idealRangeOfParams": crop_report["idealRangeOfParams"],
+            "growingTips": crop_report["growingTips"],
+            "growthTimeline": crop_report["growthTimeline"]
         })
+        except APIException as e:
+            raise
+        except Exception as e:
+            logging.error(f"Error generating crop report: {str(e)}")
+            raise InternalServerError("Failed to generate crop report")
+
+        # Return prediction
+       
+    except APIException as e:
+        raise
     except Exception as e:
-        traceback.print_exc()  # Log the error for debugging
-        return jsonify({"error": str(e)}), 500
+        logging.error(f"Predict route error: {str(e)}", exc_info=True)
+        raise InternalServerError("Failed to process prediction request")
+        
 
 # Route: Predict Crop Growth
 @app.route("/predict_crop_growth", methods=["POST"])
@@ -223,4 +310,4 @@ def predict_fertilizer():
 
 # Run the app
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
