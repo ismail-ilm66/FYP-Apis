@@ -1,4 +1,4 @@
-﻿absl-py==2.1.0
+absl-py==2.1.0
 annotated-types==0.7.0
 astunparse==1.6.3
 beautifulsoup4==4.13.3
@@ -19,8 +19,8 @@ google-auth-httplib2==0.2.0
 google-generativeai==0.8.4
 google-pasta==0.2.0
 googleapis-common-protos==1.70.0
-grpcio==1.71.0
-grpcio-status==1.71.0
+grpcio==1.59.0
+grpcio-status==1.59.0
 h5py==3.12.1
 httplib2==0.22.0
 idna==3.10
@@ -41,7 +41,7 @@ optree==0.13.1
 packaging==24.2
 pandas==2.2.3
 proto-plus==1.26.1
-protobuf==5.29.4
+protobuf>=3.20.3,<5.0.0
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
 pydantic==2.11.3
