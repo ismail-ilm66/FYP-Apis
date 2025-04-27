@@ -6,10 +6,9 @@ class APIException(Exception):
 
     def to_dict(self):
         return {
-            'error': {
-                'message': self.message,
-                'code': self.status_code
-            }
+            'status': False,
+            'message': self.message,
+            'code': self.status_code
         }
 class BadRequest(APIException):
     def __init__(self, message="Invalid request"):
