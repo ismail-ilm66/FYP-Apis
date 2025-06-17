@@ -5,7 +5,7 @@ import google.generativeai as genai
 
 from error_handlers import BadRequest, InternalServerError
 
-genai.configure(api_key="AIzaSyB49wDyRv0wPscQ-urPgKYKBIS8jq8VZT8")  
+genai.configure(api_key="AIzaSyA20c4NyuDxj1CczvWj-c5vO1B97QYb5bo")  
 gemini_model = genai.GenerativeModel("gemini-1.5-pro")
 
 def generate_crop_report(crop_name):
